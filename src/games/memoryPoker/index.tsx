@@ -24,8 +24,14 @@ interface State {
   community: Card[];
   picks: Record<Seat, number[]>;
   submitted: Record<Seat, boolean>;
-  autoPicked: Record<Seat, boolean>;
-  outcome: { winner: Seat | null; hands: Record<Seat, { name: string; cards: Card[] }> } | null;
+  /** 시간 안에 2장을 고르지 못한 사람 */
+  timedOut: Record<Seat, boolean>;
+  outcome: {
+    winner: Seat | null;
+    /** timeout: 시간 초과로 결정 / same: 두 사람이 같은 2장을 고름 */
+    reason: 'hand' | 'timeout' | 'same';
+    hands: Record<Seat, { name: string; cards: Card[] } | null>;
+  } | null;
   scores: Record<Seat, number>;
   matchWinner: Seat | null;
 }
@@ -48,7 +54,7 @@ function newRound(s: Pick<State, 'opt' | 'scores'>, round: number, now: number, 
     opt: s.opt, scores: s.scores, round, matchWinner: null,
     phase: 'ready', phaseStart: now, deadline: now + READY_MS,
     grid: deal.grid, community: deal.community,
-    picks: both([]), submitted: both(false), autoPicked: both(false), outcome: null,
+    picks: both([]), submitted: both(false), timedOut: both(false), outcome: null,
   };
 }
 
@@ -58,31 +64,37 @@ function validPicks(s: State, picks: unknown, max: number): picks is number[] {
 }
 
 /** 양쪽 선택 공개 & 비교 */
-function showdown(s: State, now: number, random: () => number): State {
-  const picks = { host: s.picks.host.slice(), guest: s.picks.guest.slice() };
-  const autoPicked = { ...s.autoPicked };
-  for (const seat of ['host', 'guest'] as Seat[]) {
-    // 시간 안에 2장을 못 골랐으면 남은 장수는 무작위로 채운다
-    while (picks[seat].length < 2) {
-      const i = Math.floor(random() * s.grid.length);
-      if (!picks[seat].includes(i)) { picks[seat].push(i); autoPicked[seat] = true; }
-    }
+function showdown(s: State, now: number): State {
+  // 시간 안에 2장을 고르지 못한 사람은 패배 (둘 다 못 고르면 무승부)
+  const timedOut = { host: s.picks.host.length < 2, guest: s.picks.guest.length < 2 };
+  const handOf = (seat: Seat) => {
+    if (timedOut[seat]) return null;
+    const cards = [...s.picks[seat].map((i) => s.grid[i]), ...s.community];
+    return { cards, value: evaluate(cards) };
+  };
+  const h = { host: handOf('host'), guest: handOf('guest') };
+
+  let winner: Seat | null = null;
+  let reason: 'hand' | 'timeout' | 'same' = 'hand';
+  if (timedOut.host || timedOut.guest) {
+    reason = 'timeout';
+    winner = timedOut.host && timedOut.guest ? null : timedOut.host ? 'guest' : 'host';
+  } else if ([...s.picks.host].sort().join() === [...s.picks.guest].sort().join()) {
+    reason = 'same'; // 같은 2장을 골랐으면 무승부
+  } else {
+    const c = compareHands(h.host!.value, h.guest!.value);
+    winner = c > 0 ? 'host' : c < 0 ? 'guest' : null;
   }
-  const handCards = (seat: Seat) => [...picks[seat].map((i) => s.grid[i]), ...s.community];
-  const hv = { host: evaluate(handCards('host')), guest: evaluate(handCards('guest')) };
-  const c = compareHands(hv.host, hv.guest);
-  const winner: Seat | null = c > 0 ? 'host' : c < 0 ? 'guest' : null;
+
   const scores = { ...s.scores };
   if (winner) scores[winner]++;
   const matchWinner = winner && scores[winner] >= s.opt.winRounds ? winner : null;
+  const view = (seat: Seat) => (h[seat] ? { name: h[seat]!.value.name, cards: h[seat]!.cards } : null);
   return {
-    ...s, picks, autoPicked, scores, matchWinner,
+    ...s, timedOut, scores, matchWinner,
     submitted: both(true),
     phase: 'showdown', phaseStart: now, deadline: now + SHOWDOWN_MS,
-    outcome: {
-      winner,
-      hands: { host: { name: hv.host.name, cards: handCards('host') }, guest: { name: hv.guest.name, cards: handCards('guest') } },
-    },
+    outcome: { winner, reason, hands: { host: view('host'), guest: view('guest') } },
   };
 }
 
@@ -184,7 +196,7 @@ function Board({ state: s, mySeat, disabled, now, onMove }: BoardProps<State, Mo
           {submitted
             ? <div className="mp-wait">제출 완료 · 상대를 기다리는 중</div>
             : <button className="btn primary block" disabled={sel.length !== 2 || disabled} onClick={() => onMove({ type: 'submit', picks: sel })}>제출</button>}
-          <p className="mp-note">시간이 끝나면 고른 카드로 자동 제출, 모자란 장수는 무작위로 채워집니다.</p>
+          <p className="mp-note">2장을 골라 두면 시간이 끝날 때 자동 제출됩니다. 2장을 다 고르지 못하면 이번 라운드는 패배!</p>
         </div>
       )}
 
@@ -195,15 +207,25 @@ function Board({ state: s, mySeat, disabled, now, onMove }: BoardProps<State, Mo
           <div className={`mp-verdict ${out.winner === null ? 'draw' : out.winner === mySeat ? 'win' : 'lose'}`}>
             {out.winner === null ? 'ROUND DRAW' : out.winner === mySeat ? 'ROUND WIN' : 'ROUND LOSE'}
           </div>
-          {([mySeat, opp] as Seat[]).map((seat) => (
-            <div key={seat} className={`mp-hand seat-${seat} ${out.winner === seat ? 'winner' : ''}`}>
-              <div className="mp-hand-head">
-                <span className="who">{seat === mySeat ? '나' : '상대'}{s.autoPicked[seat] && <em> · 시간초과 자동선택</em>}</span>
-                <span className="hand-name">{out.hands[seat].name}</span>
+          {out.reason === 'same' && <p className="mp-reason">두 사람이 같은 카드 2장을 골라 무승부</p>}
+          {out.reason === 'timeout' && (
+            <p className="mp-reason">
+              {s.timedOut.host && s.timedOut.guest ? '둘 다 시간 안에 고르지 못해 무승부'
+                : `${s.timedOut[mySeat] ? '내가' : '상대가'} 시간 안에 2장을 고르지 못해 패배`}
+            </p>
+          )}
+          {([mySeat, opp] as Seat[]).map((seat) => {
+            const hand = out.hands[seat];
+            return (
+              <div key={seat} className={`mp-hand seat-${seat} ${out.winner === seat ? 'winner' : ''} ${hand ? '' : 'timeout'}`}>
+                <div className="mp-hand-head">
+                  <span className="who">{seat === mySeat ? '나' : '상대'}</span>
+                  <span className="hand-name">{hand ? hand.name : '시간 초과'}</span>
+                </div>
+                {hand ? <CardRow cards={hand.cards} size="sm" /> : <p className="mp-note">2장을 다 고르지 못했습니다 ({s.picks[seat].length}/2)</p>}
               </div>
-              <CardRow cards={out.hands[seat].cards} size="sm" />
-            </div>
-          ))}
+            );
+          })}
           {nuts && <p className="mp-note center">이번 판 최고 조합: <b>{nuts.hand.name}</b></p>}
           <p className="mp-note center">{s.matchWinner ? '최종 결과를 곧 공개합니다' : `${secs}초 후 다음 라운드`}</p>
         </div>
@@ -237,6 +259,7 @@ export const memoryPoker: GameDefinition<State, Move> = {
       `카드가 뒤집히면 공유 카드 3장이 나타납니다.`,
       `${selectSec}초 안에 뒤집힌 카드 중 2장을 골라 공유 카드 3장과 함께 5장 족보를 만드세요.`,
       `족보가 높은 쪽이 라운드 승리. 무늬는 비교하지 않습니다.`,
+      `시간 안에 2장을 고르지 못하면 패배 (둘 다 못 고르면 무승부). 두 사람이 같은 2장을 고르면 무승부.`,
       `먼저 ${winRounds}라운드를 이기면 최종 승리!`,
     ];
   },
@@ -252,7 +275,7 @@ export const memoryPoker: GameDefinition<State, Move> = {
         if (now < s.deadline - 300) return { ok: false, error: 'early' };
         if (s.phase === 'ready') return { ok: true, state: { ...s, phase: 'reveal', phaseStart: now, deadline: now + s.opt.revealSec * 1000 } };
         if (s.phase === 'reveal') return { ok: true, state: { ...s, phase: 'select', phaseStart: now, deadline: now + s.opt.selectSec * 1000 } };
-        if (s.phase === 'select') return { ok: true, state: showdown(s, now, random) };
+        if (s.phase === 'select') return { ok: true, state: showdown(s, now) };
         return { ok: true, state: newRound(s, s.round + 1, now, random) };
       }
       case 'draft': {
@@ -265,7 +288,7 @@ export const memoryPoker: GameDefinition<State, Move> = {
         if (s.submitted[by]) return { ok: false, error: '이미 제출했습니다.' };
         if (!validPicks(s, move.picks, 2) || move.picks.length !== 2) return { ok: false, error: '카드 2장을 골라주세요.' };
         const next = { ...s, picks: { ...s.picks, [by]: move.picks }, submitted: { ...s.submitted, [by]: true } };
-        return { ok: true, state: next.submitted[other(by)] ? showdown(next, now, random) : next };
+        return { ok: true, state: next.submitted[other(by)] ? showdown(next, now) : next };
       }
     }
     return { ok: false, error: '알 수 없는 동작' };

@@ -84,7 +84,7 @@ export function Guide({ options }: { options: GameOptions }) {
             <CardView key={i} card={null} faceUp={false} selected={mePos.includes(i)} order={mePos.includes(i) ? mePos.indexOf(i) + 1 : undefined} />
           ))}
         </div>
-        <p className="guide-tip">시간이 끝날 때까지 2장을 못 고르면 고른 카드는 그대로 제출되고, 모자란 장수는 무작위로 채워집니다.</p>
+        <p className="guide-tip">2장을 골라 두기만 해도 시간이 끝날 때 자동으로 제출됩니다. 하지만 <b>{selectSec}초 안에 2장을 다 고르지 못하면 그 라운드는 패배</b>입니다. 둘 다 못 고르면 무승부.</p>
       </section>
 
       <section className="guide-step">
@@ -135,6 +135,10 @@ export function Guide({ options }: { options: GameOptions }) {
         <div className="guide-cmp">
           <CardRow cards={['As', '2h', '3d', '4c', '5s']} size="xs" /><b className="gt">&lt;</b><CardRow cards={['2s', '3h', '4d', '5c', '6s']} size="xs" />
           <small>A-2-3-4-5도 스트레이트지만 가장 낮은 스트레이트</small>
+        </div>
+        <div className="guide-cmp">
+          <CardRow cards={['Kd', '7c']} size="xs" /><b className="gt">=</b><CardRow cards={['Kd', '7c']} size="xs" />
+          <small>두 사람이 <b>똑같은 카드 2장</b>을 고르면 무승부</small>
         </div>
       </section>
 
