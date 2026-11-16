@@ -37,6 +37,8 @@ export interface Room {
   host: PlayerSlot;
   guest?: PlayerSlot | null;
   session?: GameSession | null;
+  /** 방장이 방을 만들 때 고른 게임 설정 (예: 공개 시간, 카드 수) */
+  options?: Record<string, number> | null;
 }
 
 export type Unsub = () => void;
@@ -58,6 +60,8 @@ export interface Backend {
   removeRoom(id: string): Promise<void>;
   /** 내 좌석의 접속 상태(connected)를 유지. 연결이 끊기면 자동으로 false */
   watchPresence(id: string, seat: Seat): Unsub;
+  /** 서버 기준 현재 시각(ms). 두 기기의 타이머를 맞추는 데 사용 */
+  now(): number;
 }
 
 /** DB 에서 읽은 값을 안전한 Room 으로 정규화 */
@@ -74,6 +78,7 @@ export function normalizeRoom(id: string, raw: unknown): Room | null {
     host: { ...r.host, ready: !!r.host.ready, connected: r.host.connected !== false },
     guest: r.guest && r.guest.uid ? { ...r.guest, ready: !!r.guest.ready, connected: r.guest.connected !== false } : null,
     session: r.session && r.session.stateJson ? { ...r.session, result: r.session.result ?? null } : null,
+    options: r.options ?? null,
   };
 }
 

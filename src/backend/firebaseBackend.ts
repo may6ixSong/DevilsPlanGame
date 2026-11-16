@@ -11,9 +11,13 @@ export function createFirebaseBackend(config: FirebaseOptions): Backend {
   const auth = getAuth(app);
   const db = getDatabase(app);
   const roomRef = (id: string) => ref(db, `rooms/${id}`);
+  // 기기 시계와 서버 시계의 차이를 받아서 타이머를 서버 기준으로 맞춘다
+  let offset = 0;
+  onValue(ref(db, '.info/serverTimeOffset'), (snap) => { offset = Number(snap.val()) || 0; });
 
   return {
     mode: 'firebase',
+    now: () => Date.now() + offset,
 
     init() {
       return new Promise<string>((resolve, reject) => {

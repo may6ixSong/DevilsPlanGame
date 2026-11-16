@@ -5,6 +5,7 @@ import { useToast } from '../components/Toast';
 import { GAMES, getGame } from '../games/registry';
 import { goRoom, useRooms } from '../platform/hooks';
 import { createRoom, isStale, joinRoom, seatOf } from '../platform/roomActions';
+import { resolveOptions, type GameOptions } from '../games/types';
 
 export function LobbyPage({ uid, name, onEditName }: { uid: string; name: string; onEditName: () => void }) {
   const rooms = useRooms();
@@ -51,7 +52,7 @@ export function LobbyPage({ uid, name, onEditName }: { uid: string; name: string
                   <span className="room-emoji">{g?.emoji ?? '🎲'}</span>
                   <span className="room-main">
                     <span className="room-title">{r.title}</span>
-                    <span className="room-meta">{g?.name ?? r.gameId} · 방장 {r.host.name}</span>
+                    <span className="room-meta">{g?.name ?? r.gameId}{g?.describeOptions ? ` (${g.describeOptions(resolveOptions(g, r.options))})` : ''} · {r.host.name}</span>
                   </span>
                   <span className={`badge ${full ? 'full' : 'open'}`}>{mine ? 'MY ROOM' : badge}</span>
                   <span className="room-count">{r.guest ? 2 : 1}/2</span>
@@ -66,8 +67,8 @@ export function LobbyPage({ uid, name, onEditName }: { uid: string; name: string
         <CreateRoomSheet
           defaultTitle={`${name}의 방`}
           onClose={() => setCreating(false)}
-          onCreate={async (gameId, title) => {
-            const id = await createRoom(uid, name, gameId, title);
+          onCreate={async (gameId, title, options) => {
+            const id = await createRoom(uid, name, gameId, title, options);
             goRoom(id);
           }}
         />
@@ -77,9 +78,13 @@ export function LobbyPage({ uid, name, onEditName }: { uid: string; name: string
 }
 
 function CreateRoomSheet({ defaultTitle, onClose, onCreate }: {
-  defaultTitle: string; onClose: () => void; onCreate: (gameId: string, title: string) => Promise<void>;
+  defaultTitle: string; onClose: () => void; onCreate: (gameId: string, title: string, options: GameOptions) => Promise<void>;
 }) {
   const [gameId, setGameId] = useState(GAMES[0].id);
+  const game = GAMES.find((g) => g.id === gameId)!;
+  const [options, setOptions] = useState<GameOptions>(() => resolveOptions(game));
+  const pick = (id: string) => { setGameId(id); setOptions(resolveOptions(GAMES.find((g) => g.id === id)!)); };
+  const setOpt = (k: string, v: number) => setOptions((o) => ({ ...o, [k]: v }));
   const [title, setTitle] = useState(defaultTitle);
   const [busy, setBusy] = useState(false);
   return (
@@ -90,18 +95,40 @@ function CreateRoomSheet({ defaultTitle, onClose, onCreate }: {
         <label className="field-label">게임 선택</label>
         <div className="game-grid">
           {GAMES.map((g) => (
-            <button key={g.id} className={`game-card ${g.id === gameId ? 'selected' : ''}`} onClick={() => setGameId(g.id)}>
+            <button key={g.id} className={`game-card ${g.id === gameId ? 'selected' : ''}`} onClick={() => pick(g.id)}>
               <span className="game-emoji">{g.emoji}</span>
               <span className="game-name">{g.name}</span>
               <span className="game-tag">{g.tagline}</span>
             </button>
           ))}
         </div>
+        {game.options?.map((spec) => (
+          <div key={spec.key} className="opt">
+            <label className="field-label">
+              {spec.label}
+              {spec.kind === 'range' && <b className="opt-value">{options[spec.key]}{spec.unit}</b>}
+            </label>
+            {spec.kind === 'choice' ? (
+              <div className="seg">
+                {spec.choices.map((c) => (
+                  <button key={c.value} className={options[spec.key] === c.value ? 'on' : ''} onClick={() => setOpt(spec.key, c.value)}>{c.label}</button>
+                ))}
+              </div>
+            ) : (
+              <div className="range-row">
+                <span>{spec.min}{spec.unit}</span>
+                <input type="range" min={spec.min} max={spec.max} step={spec.step ?? 1} value={options[spec.key]}
+                  aria-label={spec.label} onChange={(e) => setOpt(spec.key, Number(e.target.value))} />
+                <span>{spec.max}{spec.unit}</span>
+              </div>
+            )}
+          </div>
+        ))}
         <label className="field-label" htmlFor="room-title">방 제목</label>
         <input id="room-title" className="input" value={title} maxLength={24} onChange={(e) => setTitle(e.target.value)} />
         <div className="row">
           <button className="btn ghost" onClick={onClose}>취소</button>
-          <button className="btn primary grow" disabled={busy} onClick={async () => { setBusy(true); try { await onCreate(gameId, title); } finally { setBusy(false); } }}>
+          <button className="btn primary grow" disabled={busy} onClick={async () => { setBusy(true); try { await onCreate(gameId, title, options); } finally { setBusy(false); } }}>
             개설
           </button>
         </div>

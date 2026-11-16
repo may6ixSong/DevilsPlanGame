@@ -29,6 +29,7 @@ export function createLocalBackend(): Backend {
 
   return {
     mode: 'local',
+    now: () => Date.now(),
 
     async init() {
       let uid = sessionStorage.getItem('dp1v1:local-uid');

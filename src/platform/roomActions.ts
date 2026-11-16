@@ -1,5 +1,6 @@
 import { backend, other, type Room, type Seat } from '../backend';
 import { getGame } from '../games/registry';
+import { resolveOptions, type GameOptions } from '../games/types';
 
 export function seatOf(room: Room, uid: string): Seat | null {
   if (room.host.uid === uid) return 'host';
@@ -7,7 +8,7 @@ export function seatOf(room: Room, uid: string): Seat | null {
   return null;
 }
 
-export async function createRoom(uid: string, name: string, gameId: string, title: string) {
+export async function createRoom(uid: string, name: string, gameId: string, title: string, options: GameOptions = {}) {
   const id = backend.newRoomId();
   await backend.setRoom({
     id,
@@ -18,6 +19,7 @@ export async function createRoom(uid: string, name: string, gameId: string, titl
     host: { uid, name, ready: false, connected: true },
     guest: null,
     session: null,
+    options: getGame(gameId) ? resolveOptions(getGame(gameId)!, options) : null,
   });
   return id;
 }
@@ -58,7 +60,7 @@ export async function setReady(roomId: string, seat: Seat, ready: boolean) {
       const game = getGame(r.gameId);
       if (!game) return undefined;
       const firstSeat: Seat = Math.random() < 0.5 ? 'host' : 'guest';
-      const state = game.setup({ firstSeat, random: Math.random });
+      const state = game.setup({ firstSeat, random: Math.random, options: resolveOptions(game, r.options), now: backend.now() });
       next.status = 'playing';
       next.session = { stateJson: JSON.stringify(state), firstSeat, startedAt: Date.now(), moveCount: 0, result: null };
     }
@@ -73,7 +75,7 @@ export async function makeMove(roomId: string, seat: Seat, move: unknown): Promi
     if (r.status !== 'playing' || !r.session) { error = '진행 중인 게임이 없습니다.'; return undefined; }
     const game = getGame(r.gameId);
     if (!game) { error = '알 수 없는 게임'; return undefined; }
-    const out = game.applyMove(JSON.parse(r.session.stateJson), move, seat);
+    const out = game.applyMove(JSON.parse(r.session.stateJson), move, seat, { now: backend.now(), random: Math.random });
     if (!out.ok) { error = out.error; return undefined; }
     const result = game.getResult(out.state);
     return {

@@ -58,7 +58,13 @@ npm run build && firebase deploy
    - `Board` : 화면 컴포넌트
 2. `src/games/registry.ts` 의 `GAMES` 배열에 추가합니다. 그러면 방 만들기 목록에 자동으로 나타납니다.
 
-예시로 `틱택토`, `사목`(4개 잇기)이 들어 있습니다.
+선택 기능:
+- `options` : 방 만들 때 방장이 고르는 설정 (선택지 / 슬라이더). `setup()`, `rules()`, `Guide` 에 그대로 전달됩니다.
+- `Guide` : 대기실·게임 중 [룰] 버튼으로 여는 그림 가이드
+- `scoreOf` : 선수 카드에 보이는 점수 (라운드제 게임)
+- 시간제 게임은 `BoardProps.now()` (서버 시계)와 `{ type: 'tick' }` 같은 수를 이용해 단계를 넘깁니다. `src/games/memoryPoker` 참고.
+
+들어 있는 게임: `기억 포커`, `틱택토`, `사목`(4개 잇기)
 
 ## 알아둘 점
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { backend, other, SEATS, type Room, type Seat } from '../backend';
 import { useToast } from '../components/Toast';
 import { getGame } from '../games/registry';
+import { resolveOptions, rulesOf, type GameDefinition, type GameOptions } from '../games/types';
 import { goLobby, useRoom } from '../platform/hooks';
 import { backToLobby, joinRoom, leaveRoom, makeMove, resign, seatOf, setReady } from '../platform/roomActions';
 
@@ -9,6 +10,7 @@ export function RoomPage({ roomId, uid, name }: { roomId: string; uid: string; n
   const room = useRoom(roomId);
   const toast = useToast();
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [showGuide, setShowGuide] = useState(false);
   const triedJoin = useRef(false);
   const seat = room ? seatOf(room, uid) : null;
   const wasSeated = useRef(false);
@@ -61,6 +63,7 @@ export function RoomPage({ roomId, uid, name }: { roomId: string; uid: string; n
 
   const game = getGame(room.gameId);
   if (!game) return <div className="center-msg">지원하지 않는 게임입니다: {room.gameId}<button className="btn" onClick={leave}>나가기</button></div>;
+  const options = resolveOptions(game, room.options);
 
   return (
     <div className="page room-page">
@@ -70,11 +73,14 @@ export function RoomPage({ roomId, uid, name }: { roomId: string; uid: string; n
           <div className="room-title">{room.title}</div>
           <div className="room-meta">{game.emoji} {game.name}</div>
         </div>
-        <InviteButton roomId={room.id} />
+        {room.status === 'lobby'
+          ? <InviteButton roomId={room.id} />
+          : <button className="icon-btn" onClick={() => setShowGuide(true)} aria-label="룰 보기">룰</button>}
       </header>
       {room.status === 'lobby'
-        ? <WaitingRoom room={room} seat={seat} />
-        : <GameView room={room} seat={seat} onLeave={leave} />}
+        ? <WaitingRoom room={room} seat={seat} options={options} onGuide={() => setShowGuide(true)} />
+        : <GameView room={room} seat={seat} options={options} onLeave={leave} />}
+      {showGuide && <GuideSheet game={game} options={options} onClose={() => setShowGuide(false)} />}
     </div>
   );
 }
@@ -91,13 +97,14 @@ function InviteButton({ roomId }: { roomId: string }) {
   return <button className="icon-btn" onClick={share} aria-label="초대하기">초대</button>;
 }
 
-function PlayerCard({ room, seat, mySeat, active }: { room: Room; seat: Seat; mySeat: Seat; active?: boolean }) {
+function PlayerCard({ room, seat, mySeat, active, score }: { room: Room; seat: Seat; mySeat: Seat; active?: boolean; score?: string | number }) {
   const p = room[seat];
   const label = seat === 'host' ? 'HOST' : 'CHALLENGER';
   return (
     <div className={`player-card seat-${seat} ${active ? 'active' : ''} ${p ? '' : 'empty'}`}>
       <div className="player-role">{label}{seat === mySeat && ' · ME'}</div>
       <div className="player-name">{p ? p.name : '대기 중…'}</div>
+      {score !== undefined && <div className="player-score">{score}</div>}
       {p && room.status === 'lobby' && (
         <div className={`ready-tag ${p.ready ? 'on' : ''}`}>{p.ready ? 'READY' : 'NOT READY'}</div>
       )}
@@ -106,7 +113,7 @@ function PlayerCard({ room, seat, mySeat, active }: { room: Room; seat: Seat; my
   );
 }
 
-function WaitingRoom({ room, seat }: { room: Room; seat: Seat }) {
+function WaitingRoom({ room, seat, options, onGuide }: { room: Room; seat: Seat; options: GameOptions; onGuide: () => void }) {
   const game = getGame(room.gameId)!;
   const me = room[seat]!;
   const [busy, setBusy] = useState(false);
@@ -124,7 +131,8 @@ function WaitingRoom({ room, seat }: { room: Room; seat: Seat }) {
       </div>
       <section className="card frame rules">
         <h3>RULES · {game.name}</h3>
-        <ul>{game.rules.map((r, i) => <li key={i}>{r}</li>)}</ul>
+        <ul>{rulesOf(game, options).map((r, i) => <li key={i}>{r}</li>)}</ul>
+        {game.Guide && <button className="btn block guide-btn" onClick={onGuide}>카드로 보는 룰 가이드</button>}
       </section>
       <div className="bottom-bar">
         <p className="hint">{hint}</p>
@@ -136,7 +144,7 @@ function WaitingRoom({ room, seat }: { room: Room; seat: Seat }) {
   );
 }
 
-function GameView({ room, seat, onLeave }: { room: Room; seat: Seat; onLeave: () => void }) {
+function GameView({ room, seat, options, onLeave }: { room: Room; seat: Seat; options: GameOptions; onLeave: () => void }) {
   const game = getGame(room.gameId)!;
   const toast = useToast();
   const session = room.session!;
@@ -147,8 +155,15 @@ function GameView({ room, seat, onLeave }: { room: Room; seat: Seat; onLeave: ()
   const opp = room[other(seat)];
   const names = { host: room.host.name, guest: room.guest?.name ?? '-' };
   const [sending, setSending] = useState(false);
+  const [showResult, setShowResult] = useState(false);
+  useEffect(() => {
+    if (!finished) { setShowResult(false); return; }
+    const t = setTimeout(() => setShowResult(true), game.resultDelayMs ?? 0);
+    return () => clearTimeout(t);
+  }, [finished, game.resultDelayMs]);
 
-  const onMove = async (move: unknown) => {
+  const onMove = async (move: unknown, opts?: { silent?: boolean }) => {
+    if (opts?.silent) { await makeMove(room.id, seat, move).catch(() => {}); return; }
     if (sending) return;
     setSending(true);
     const err = await makeMove(room.id, seat, move).finally(() => setSending(false));
@@ -159,14 +174,16 @@ function GameView({ room, seat, onLeave }: { room: Room; seat: Seat; onLeave: ()
   if (finished && result) {
     status = result.winner === null ? 'DRAW' : result.winner === seat ? 'VICTORY' : 'DEFEAT';
   } else if (turn) status = turn === seat ? '당신의 차례' : `${names[turn]}의 차례`;
-  else status = '진행 중';
+  else status = '';
 
   return (
     <>
       <div className="vs-row compact">
-        {SEATS.map((s) => <PlayerCard key={s} room={room} seat={s} mySeat={seat} active={!finished && turn === s} />)}
+        {SEATS.map((s) => (
+          <PlayerCard key={s} room={room} seat={s} mySeat={seat} active={!finished && turn === s} score={game.scoreOf?.(state, s)} />
+        ))}
       </div>
-      <div className={`turn-banner ${!finished && turn === seat ? 'mine' : ''}`}>{status}</div>
+      {status && (!finished || showResult) && <div className={`turn-banner ${!finished && turn === seat ? 'mine' : ''}`}>{status}</div>}
       {!opp?.connected && !finished && <div className="warn">상대의 연결이 끊겼습니다. 재접속을 기다리는 중…</div>}
 
       <div className="board-wrap">
@@ -174,8 +191,10 @@ function GameView({ room, seat, onLeave }: { room: Room; seat: Seat; onLeave: ()
           state={state}
           mySeat={seat}
           isMyTurn={turn === null || turn === seat}
-          disabled={finished || sending}
+          disabled={finished || (sending && turn !== null)}
           names={names}
+          options={options}
+          now={backend.now}
           onMove={onMove}
         />
       </div>
@@ -186,8 +205,8 @@ function GameView({ room, seat, onLeave }: { room: Room; seat: Seat; onLeave: ()
         </div>
       )}
 
-      {finished && result && <div style={{ height: 190 }} />}
-      {finished && result && (
+      {showResult && result && <div style={{ height: 190 }} />}
+      {showResult && result && (
         <div className="result-overlay">
           <div className={`result-card ${result.winner === null ? 'draw' : result.winner === seat ? 'win' : 'lose'}`}>
             <div className="result-title">{status}</div>
@@ -203,5 +222,21 @@ function GameView({ room, seat, onLeave }: { room: Room; seat: Seat; onLeave: ()
         </div>
       )}
     </>
+  );
+}
+
+function GuideSheet({ game, options, onClose }: { game: GameDefinition; options: GameOptions; onClose: () => void }) {
+  const Guide = game.Guide;
+  return (
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div className="sheet guide-sheet" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="룰 가이드">
+        <div className="sheet-handle" />
+        <h2 className="sheet-title">{game.name} · 룰 가이드</h2>
+        {Guide ? <Guide options={options} /> : (
+          <ul className="guide-list">{rulesOf(game, options).map((r, i) => <li key={i}>{r}</li>)}</ul>
+        )}
+        <button className="btn primary block" onClick={onClose}>확인</button>
+      </div>
+    </div>
   );
 }
