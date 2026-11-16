@@ -65,7 +65,7 @@ export function RoomPage({ roomId, uid, name }: { roomId: string; uid: string; n
   return (
     <div className="page room-page">
       <header className="room-header">
-        <button className="icon-btn" onClick={leave} aria-label="나가기">←</button>
+        <button className="icon-btn" onClick={leave} aria-label="나가기">‹</button>
         <div className="room-header-title">
           <div className="room-title">{room.title}</div>
           <div className="room-meta">{game.emoji} {game.name}</div>
@@ -88,15 +88,15 @@ function InviteButton({ roomId }: { roomId: string }) {
       else { await navigator.clipboard.writeText(url); toast('초대 링크를 복사했습니다.'); }
     } catch { /* 공유 취소 */ }
   };
-  return <button className="icon-btn" onClick={share} aria-label="초대하기">🔗</button>;
+  return <button className="icon-btn" onClick={share} aria-label="초대하기">초대</button>;
 }
 
 function PlayerCard({ room, seat, mySeat, active }: { room: Room; seat: Seat; mySeat: Seat; active?: boolean }) {
   const p = room[seat];
-  const label = seat === 'host' ? '방장' : '도전자';
+  const label = seat === 'host' ? 'HOST' : 'CHALLENGER';
   return (
     <div className={`player-card seat-${seat} ${active ? 'active' : ''} ${p ? '' : 'empty'}`}>
-      <div className="player-role">{label}{seat === mySeat && ' · 나'}</div>
+      <div className="player-role">{label}{seat === mySeat && ' · ME'}</div>
       <div className="player-name">{p ? p.name : '대기 중…'}</div>
       {p && room.status === 'lobby' && (
         <div className={`ready-tag ${p.ready ? 'on' : ''}`}>{p.ready ? 'READY' : 'NOT READY'}</div>
@@ -111,7 +111,7 @@ function WaitingRoom({ room, seat }: { room: Room; seat: Seat }) {
   const me = room[seat]!;
   const [busy, setBusy] = useState(false);
   const toggle = async () => { setBusy(true); try { await setReady(room.id, seat, !me.ready); } finally { setBusy(false); } };
-  const hint = !room.guest ? '상대를 기다리는 중입니다. 🔗 버튼으로 초대 링크를 보내보세요.'
+  const hint = !room.guest ? '상대를 기다리는 중입니다. [초대] 버튼으로 링크를 보내보세요.'
     : me.ready ? '상대가 READY 하면 게임이 바로 시작됩니다.'
     : '둘 다 READY 하면 게임이 시작됩니다.';
 
@@ -122,8 +122,8 @@ function WaitingRoom({ room, seat }: { room: Room; seat: Seat }) {
         <div className="vs">VS</div>
         <PlayerCard room={room} seat="guest" mySeat={seat} />
       </div>
-      <section className="card rules">
-        <h3>{game.emoji} {game.name} 규칙</h3>
+      <section className="card frame rules">
+        <h3>RULES · {game.name}</h3>
         <ul>{game.rules.map((r, i) => <li key={i}>{r}</li>)}</ul>
       </section>
       <div className="bottom-bar">
@@ -157,8 +157,8 @@ function GameView({ room, seat, onLeave }: { room: Room; seat: Seat; onLeave: ()
 
   let status = '';
   if (finished && result) {
-    status = result.winner === null ? '무승부' : result.winner === seat ? '승리!' : '패배';
-  } else if (turn) status = turn === seat ? '내 차례' : `${names[turn]} 차례`;
+    status = result.winner === null ? 'DRAW' : result.winner === seat ? 'VICTORY' : 'DEFEAT';
+  } else if (turn) status = turn === seat ? '당신의 차례' : `${names[turn]}의 차례`;
   else status = '진행 중';
 
   return (
